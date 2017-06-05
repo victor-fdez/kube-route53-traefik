@@ -1,0 +1,19 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    app: kube-traefik
+  name: kube-traefik
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: kube-traefik
+      name: kube-traefik
+    spec:
+      containers:
+      - name: kube-traefik
+        image: palmstonegames/kube-traefik:latest
+      - name: kubectl-proxy
+        image: palmstonegames/kubectl-proxy:1.4.0

@@ -1,0 +1,5 @@
+package: .
+import:
+- package: k8s.io/client-go
+  version: v2.0.0
+- package: gopkg.in/d4l3k/messagediff.v1

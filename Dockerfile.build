@@ -1,0 +1,18 @@
+#FROM alpine:3.5
+#RUN apk --no-cache add ca-certificates
+#ADD kube-traefik /kube-traefik
+#ENTRYPOINT ["/kube-traefik"]
+FROM instrumentisto/glide:0.12.3-go1.8
+
+WORKDIR /go/src/app
+
+COPY ./glide.lock \
+     ./glide.yaml \
+     /go/src/app/ 
+RUN glide --no-color install
+
+COPY ./main.go \
+     /go/src/app/ 
+RUN go build -o kube-traefik .
+
+

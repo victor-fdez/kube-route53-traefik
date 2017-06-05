@@ -1,0 +1,6 @@
+.env
+*.swp
+kube-traefik
+vendor/
+pkg/
+bin/
