@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/victor-fdez/kube-route53-traefik/dns_provider"
 	"github.com/victor-fdez/kube-route53-traefik/view"
 
 	"k8s.io/client-go/kubernetes"
@@ -49,6 +50,8 @@ func Setup(kubeconfig *string) {
 	if err != nil {
 		panic(err.Error())
 	}
+	dns_provider.Setup()
+	// setup AWS dns provider
 	serviceWatcherDone = false
 	nodeWatcherDone = false
 }
@@ -57,6 +60,7 @@ func Start() {
 	// get watcher for services in kubernetes
 	//TODO: have diff structure to check changes
 	//TODO: update aws after ingress is added
+	dns_provider.GetRoutes()
 	ingressEventChan := ingressWatcher.ResultChan()
 	nodeEventChan := nodeWatcher.ResultChan()
 	for {

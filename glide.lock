@@ -1,11 +1,13 @@
-hash: 0b0982476816e2ca249e14edb6d6785e170d52fee6c2ab60350e2863ce0e5624
-updated: 2017-06-06T13:34:40.210836466-07:00
+hash: 66957315e37abd698b41dcdd586769213bf69e96fb4d9392293d630024954863
+updated: 2017-06-07T08:21:18.830220353-07:00
 imports:
 - name: cloud.google.com/go
   version: 3b1ae45394a234c385be014e9a488f2bb6eef821
   subpackages:
   - compute/metadata
   - internal
+- name: github.com/aws/aws-sdk-go
+  version: 512bdaf8bec30abd545b440447cebb57b53d3af9
 - name: github.com/blang/semver
   version: 31b736133b98f26d5e078ec9eb591666edfd091f
 - name: github.com/coreos/go-oidc
