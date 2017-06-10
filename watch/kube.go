@@ -110,5 +110,8 @@ func updateRoutes(routeChanges view.RouteChanges) error {
 		glog.Infof("Upserting route for %s with %v", route.Subdomain, route.Ips)
 		dns_providers.AddRoute(&id, &route.Subdomain, route.Ips)
 	}
+	if len(routeChanges.Deleted) == 0 && len(routeChanges.Changed) == 0 {
+		glog.Infof("No changes to routes")
+	}
 	return nil
 }
