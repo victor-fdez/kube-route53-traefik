@@ -16,7 +16,6 @@ var route53Svc *route53.Route53
 var dryRun bool
 var routes AWSRoutes
 
-//TODO: keep a cache of routes already stored and check them at the start
 type Route struct {
 	subdomain  string
 	domain     string
@@ -58,16 +57,17 @@ func AddRoute(id, subdomain *string, ips []string) error {
 		glog.Infof("Found route in stored routes checking if something has changed (%s)", key)
 		// check if something changed for structure
 		_, equal := messagediff.DeepDiff(subdomainRoute.ips, ips)
-		if !equal {
-			// transplant previous information to new structure
-			subdomainRoute = Route{
-				subdomain:  subdomainRoute.subdomain,
-				domain:     subdomainRoute.domain,
-				hostedZone: subdomainRoute.hostedZone,
-				ips:        ips,
-			}
-			// remove old structure from routes
-			delete(routes, key)
+		if equal {
+			// do nothing we already have routes setup
+			return nil
+		}
+		glog.Infof("Routes ips differed old %#v against new %#v", subdomainRoute.ips, ips)
+		// transplant previous information to new structure
+		subdomainRoute = Route{
+			subdomain:  subdomainRoute.subdomain,
+			domain:     subdomainRoute.domain,
+			hostedZone: subdomainRoute.hostedZone,
+			ips:        ips,
 		}
 	}
 
@@ -89,7 +89,7 @@ func AddRoute(id, subdomain *string, ips []string) error {
 func RemoveRoute(id, subdomain *string) error {
 	key := *id + "/" + *subdomain
 
-	subdomainRoute, ok = routes[key]
+	subdomainRoute, ok := routes[key]
 	if !ok {
 		// There's nothing to delete hmmm
 		return fmt.Errorf("Unable to delete any AWS routes since the route does not exists (%s)", key)
@@ -106,6 +106,7 @@ func RemoveRoute(id, subdomain *string) error {
 		delete(routes, key)
 	}
 	glog.Flush()
+	return nil
 }
 
 func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zoneID string) error {

@@ -13,7 +13,7 @@ func main() {
 	flag.Parse()
 	glog.Info("Starting kubernetes / route53 / traefik synchronization service")
 	if *dryRun {
-		glog.Info("running in DRYRUN mode")
+		glog.Info("Running in DRYRUN mode")
 	}
 	glog.Flush()
 	watchKube.Setup(kubeconfig, *dryRun)
