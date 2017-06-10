@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/victor-fdez/kube-route53-traefik/dns_provider"
+	"github.com/victor-fdez/kube-route53-traefik/dns_providers"
 	"github.com/victor-fdez/kube-route53-traefik/view"
 
 	"k8s.io/client-go/kubernetes"
@@ -18,9 +18,11 @@ import (
 var client *kubernetes.Clientset
 var ingressWatcher, nodeWatcher watch.Interface
 var serviceWatcherDone, nodeWatcherDone bool
+var dryRun bool
 
-func Setup(kubeconfig *string) {
+func Setup(kubeconfig *string, DryRun bool) {
 	var config *rest.Config
+	dryRun = DryRun
 	var err error
 	//var serviceWatcherDone, nodeWatcherDone bool
 	if *kubeconfig != "" {
@@ -50,7 +52,7 @@ func Setup(kubeconfig *string) {
 	if err != nil {
 		panic(err.Error())
 	}
-	dns_provider.Setup()
+	dns_providers.Setup(true)
 	// setup AWS dns provider
 	serviceWatcherDone = false
 	nodeWatcherDone = false
@@ -60,7 +62,8 @@ func Start() {
 	// get watcher for services in kubernetes
 	//TODO: have diff structure to check changes
 	//TODO: update aws after ingress is added
-	dns_provider.GetRoutes()
+	id, subdomain := "ingress", "hello.waittimes.io"
+	dns_providers.AddRoute(&id, &subdomain, []string{"8.8.8.8"})
 	ingressEventChan := ingressWatcher.ResultChan()
 	nodeEventChan := nodeWatcher.ResultChan()
 	for {
