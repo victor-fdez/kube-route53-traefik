@@ -4,15 +4,19 @@
 #ENTRYPOINT ["/kube-traefik"]
 FROM instrumentisto/glide:0.12.3-go1.8
 
-WORKDIR /go/src/app
+WORKDIR /go/src/github.com/victor-fdez/kube-route53-traefik/
 
 COPY ./glide.lock \
      ./glide.yaml \
-     /go/src/app/ 
+     /go/src/github.com/victor-fdez/kube-route53-traefik/ 
+
 RUN glide --no-color install
 
-COPY ./main.go \
-     /go/src/app/ 
+COPY ./main.go /go/src/github.com/victor-fdez/kube-route53-traefik/
+COPY ./watch/ /go/src/github.com/victor-fdez/kube-route53-traefik/watch/
+COPY ./view/ /go/src/github.com/victor-fdez/kube-route53-traefik/view/ 
+COPY ./dns_providers/ /go/src/github.com/victor-fdez/kube-route53-traefik/dns_providers/
+
 RUN go build -o kube-traefik .
 
 

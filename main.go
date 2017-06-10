@@ -4,7 +4,7 @@ import (
 	"flag"
 
 	"github.com/golang/glog"
-	watchKube "github.com/victor-fdez/kube-route53-traefik/watch"
+	"github.com/victor-fdez/kube-route53-traefik/watch"
 )
 
 func main() {
@@ -16,6 +16,6 @@ func main() {
 		glog.Info("Running in DRYRUN mode")
 	}
 	glog.Flush()
-	watchKube.Setup(kubeconfig, *dryRun)
-	watchKube.Start()
+	watch.Setup(kubeconfig, *dryRun)
+	watch.Start()
 }
