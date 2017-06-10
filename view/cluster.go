@@ -106,7 +106,12 @@ func (c ClusterView) UpdateNode(node *v1.Node, eventType watch.EventType) RouteC
 	case watch.Modified:
 		routeChanges.Changed = State.ModNode(node)
 	case watch.Deleted:
-		routeChanges.Deleted = State.DeleteNode(node)
+		routes := State.DeleteNode(node)
+		if len(c.nodes) == 0 {
+			routeChanges.Deleted = routes
+		} else {
+			routeChanges.Changed = routes
+		}
 	}
 	return routeChanges
 }
