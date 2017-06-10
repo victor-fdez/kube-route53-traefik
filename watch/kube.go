@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/golang/glog"
 	"github.com/victor-fdez/kube-route53-traefik/dns_providers"
 	"github.com/victor-fdez/kube-route53-traefik/view"
 
@@ -72,16 +73,8 @@ func Start() {
 			if ok {
 				// process each event received
 				ingress := event.Object.(*v1beta1.Ingress)
-				switch event.Type {
-				case watch.Added:
-					view.State.AddIngress(ingress)
-				case watch.Modified:
-					view.State.ModIngress(ingress)
-				case watch.Deleted:
-					view.State.DeleteIngress(ingress)
-				case watch.Error:
-					fmt.Println("error")
-				}
+				routeChanges := view.State.UpdateIngress(ingress, event.Type)
+				updateRoutes(routeChanges)
 				view.State.Dump()
 			} else {
 				// error with channel/or no more events
@@ -91,14 +84,8 @@ func Start() {
 		case event, ok := <-nodeEventChan:
 			if ok {
 				node := event.Object.(*v1.Node)
-				switch event.Type {
-				case watch.Added:
-					view.State.AddNode(node)
-				case watch.Modified:
-					view.State.ModNode(node)
-				case watch.Deleted:
-					view.State.DeleteNode(node)
-				}
+				routeChanges := view.State.UpdateNode(node, event.Type)
+				updateRoutes(routeChanges)
 				view.State.Dump()
 			} else {
 				fmt.Printf("Error: no more node events")
@@ -111,4 +98,17 @@ func Start() {
 			os.Exit(0)
 		}
 	}
+}
+
+func updateRoutes(routeChanges view.RouteChanges) error {
+	id := ""
+	for _, route := range routeChanges.Deleted {
+		glog.Infof("Deleting route for %s", route.Subdomain)
+		dns_providers.RemoveRoute(&id, &route.Subdomain)
+	}
+	for _, route := range routeChanges.Changed {
+		glog.Infof("Upserting route for %s with %v", route.Subdomain, route.Ips)
+		dns_providers.AddRoute(&id, &route.Subdomain, route.Ips)
+	}
+	return nil
 }

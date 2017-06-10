@@ -7,6 +7,7 @@ import (
 	messagediff "gopkg.in/d4l3k/messagediff.v1"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/pkg/watch"
 )
 
 type Ingress struct {
@@ -28,6 +29,16 @@ type ClusterView struct {
 	ingresses map[string]Ingress
 	nodes     map[string]Node
 	lbTraefik LBTraefik
+}
+
+type RouteChanges struct {
+	Deleted []Route
+	Changed []Route
+}
+
+type Route struct {
+	Subdomain string
+	Ips       []string
 }
 
 var State ClusterView
@@ -64,7 +75,43 @@ func (c ClusterView) Dump() {
 	spew.Config.Indent = "\t"
 	spew.Dump(c)
 }
-func (c ClusterView) AddIngress(i *v1beta1.Ingress) bool {
+
+func (c ClusterView) UpdateIngress(ingress *v1beta1.Ingress, eventType watch.EventType) RouteChanges {
+	routeChanges := RouteChanges{
+		Deleted: make([]Route, 0, 1),
+		Changed: make([]Route, 0, 1),
+	}
+	//TODO: if ingress is added then add/modified route is returned
+	switch eventType {
+	case watch.Added:
+		routeChanges.Changed = State.AddIngress(ingress)
+	case watch.Modified:
+		routeChanges.Changed = State.ModIngress(ingress)
+	case watch.Deleted:
+		routeChanges.Deleted = State.DeleteIngress(ingress)
+	case watch.Error:
+		fmt.Println("error")
+	}
+	return routeChanges
+}
+
+func (c ClusterView) UpdateNode(node *v1.Node, eventType watch.EventType) RouteChanges {
+	routeChanges := RouteChanges{
+		Deleted: make([]Route, 0, 1),
+		Changed: make([]Route, 0, 1),
+	}
+	switch eventType {
+	case watch.Added:
+		routeChanges.Changed = State.AddNode(node)
+	case watch.Modified:
+		routeChanges.Changed = State.ModNode(node)
+	case watch.Deleted:
+		routeChanges.Deleted = State.DeleteNode(node)
+	}
+	return routeChanges
+}
+
+func (c ClusterView) AddIngress(i *v1beta1.Ingress) []Route {
 	key := ingressKey(i)
 	_, ok := c.ingresses[key]
 	if ok {
@@ -72,20 +119,23 @@ func (c ClusterView) AddIngress(i *v1beta1.Ingress) bool {
 	}
 	newIngress := createIngress(i)
 	c.ingresses[key] = newIngress
-	return true
+	routes := c.createRoutes(newIngress.hostnames)
+	return routes
 }
 
-func (c ClusterView) DeleteIngress(i *v1beta1.Ingress) bool {
+func (c ClusterView) DeleteIngress(i *v1beta1.Ingress) []Route {
 	key := ingressKey(i)
 	_, ok := c.ingresses[key]
 	if ok {
 		delete(c.ingresses, key)
 		fmt.Printf("Deleted Ingress with key = %v\n", key)
 	}
-	return true
+	oldIngress := createIngress(i)
+	routes := c.createRoutes(oldIngress.hostnames)
+	return routes
 }
 
-func (c ClusterView) ModIngress(i *v1beta1.Ingress) bool {
+func (c ClusterView) ModIngress(i *v1beta1.Ingress) []Route {
 	key := ingressKey(i)
 	ingress, ok := c.ingresses[key]
 	if !ok {
@@ -94,10 +144,11 @@ func (c ClusterView) ModIngress(i *v1beta1.Ingress) bool {
 	newIngress := createIngress(i)
 	_, equal := messagediff.DeepDiff(ingress, newIngress)
 	if equal {
-		return false
+		return make([]Route, 0)
 	}
 	c.ingresses[key] = newIngress
-	return true
+	routes := c.createRoutes(newIngress.hostnames)
+	return routes
 }
 
 func nodeKey(node *v1.Node) string {
@@ -117,7 +168,7 @@ func createNode(node *v1.Node) Node {
 	}
 }
 
-func (c ClusterView) AddNode(node *v1.Node) bool {
+func (c ClusterView) AddNode(node *v1.Node) []Route {
 	key := nodeKey(node)
 	_, ok := c.nodes[key]
 	if ok {
@@ -125,20 +176,24 @@ func (c ClusterView) AddNode(node *v1.Node) bool {
 	}
 	newNode := createNode(node)
 	c.nodes[key] = newNode
-	return true
+	hostnames := c.getHostnames()
+	routes := c.createRoutes(hostnames)
+	return routes
 }
 
-func (c ClusterView) DeleteNode(node *v1.Node) bool {
+func (c ClusterView) DeleteNode(node *v1.Node) []Route {
 	key := nodeKey(node)
 	_, ok := c.nodes[key]
 	if ok {
 		delete(c.nodes, key)
 		fmt.Printf("Deleted node with key = %v\n", key)
 	}
-	return true
+	hostnames := c.getHostnames()
+	routes := c.createRoutes(hostnames)
+	return routes
 }
 
-func (c ClusterView) ModNode(node *v1.Node) bool {
+func (c ClusterView) ModNode(node *v1.Node) []Route {
 	key := nodeKey(node)
 	oldNode, ok := c.nodes[key]
 	if !ok {
@@ -147,8 +202,41 @@ func (c ClusterView) ModNode(node *v1.Node) bool {
 	newNode := createNode(node)
 	_, equal := messagediff.DeepDiff(oldNode, newNode)
 	if equal {
-		return false
+		return make([]Route, 0)
 	}
 	c.nodes[key] = newNode
-	return true
+	hostnames := c.getHostnames()
+	routes := c.createRoutes(hostnames)
+	return routes
+}
+
+func (c ClusterView) getNodeIps() []string {
+	ips := make([]string, 0, 3)
+	for _, node := range c.nodes {
+		ips = append(ips, node.externalIP)
+	}
+	return ips
+}
+
+func (c ClusterView) getHostnames() []string {
+	hostnames := make([]string, 0, 3)
+	for _, ingress := range c.ingresses {
+		ingressHostnames := ingress.hostnames
+		hostnames = append(hostnames, ingressHostnames...)
+	}
+	return hostnames
+}
+
+func (c ClusterView) createRoutes(hostnames []string) []Route {
+	routes := make([]Route, 0, 1)
+	ips := c.getNodeIps()
+	if len(hostnames) != 0 && len(ips) != 0 {
+		for _, hostname := range hostnames {
+			routes = append(routes, Route{
+				Subdomain: hostname,
+				Ips:       ips,
+			})
+		}
+	}
+	return routes
 }
