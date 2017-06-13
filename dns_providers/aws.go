@@ -78,7 +78,7 @@ func AddRoute(id, subdomain *string, ips []string) error {
 		subdomainRoute.subdomain,
 		*subdomainRoute.hostedZone.Id)
 	if err != nil {
-		return fmt.Errorf("Unable to update route53 for subdomain %s", subdomainRoute.subdomain)
+		return fmt.Errorf("Unable to update route53 for subdomain %s : %v", subdomainRoute.subdomain, err)
 	} else {
 		routes[key] = subdomainRoute
 	}
@@ -112,6 +112,9 @@ func RemoveRoute(id, subdomain *string) error {
 func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zoneID string) error {
 	var resourceRecords []*route53.ResourceRecord = make([]*route53.ResourceRecord, 0, 1)
 	var rrs route53.ResourceRecordSet
+	var cleanDomain = strings.Trim(domain, ".") + "."
+	var zID = strings.Split(zoneID, "/")[2]
+	var TTL int64 = 300
 	// If we have an alias we use that
 	if alias != nil {
 		at := route53.AliasTarget{
@@ -121,21 +124,23 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 		}
 		rrs = route53.ResourceRecordSet{
 			AliasTarget: &at,
-			Name:        &domain,
+			Name:        &cleanDomain,
 			Type:        aws.String("A"),
 		}
 	} else {
 		// for multiple ips we use those ips instead
-		for _, ip := range ips {
-			resourceRecords = append(resourceRecords, &route53.ResourceRecord{
-				Value: &ip,
-			})
+		for i, _ := range ips {
+			rr := route53.ResourceRecord{
+				Value: &ips[i],
+			}
+			resourceRecords = append(resourceRecords, &rr)
 		}
 		// A record for multiple IPs
 		rrs = route53.ResourceRecordSet{
 			ResourceRecords: resourceRecords,
-			Name:            &domain,
+			Name:            &cleanDomain,
 			Type:            aws.String("A"),
+			TTL:             &TTL,
 		}
 	}
 	glog.Infof("Upserting A record for domain %s with %#v", domain, rrs)
@@ -149,16 +154,21 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 	}
 	crrsInput := route53.ChangeResourceRecordSetsInput{
 		ChangeBatch:  &batch,
-		HostedZoneId: &zoneID,
+		HostedZoneId: &zID,
+	}
+	err := crrsInput.Validate()
+	if err != nil {
+		return fmt.Errorf("%v", err.Error())
+	} else {
+		glog.Infof("A record has been validated on the client %v", crrsInput)
 	}
 	if dryRun {
 		glog.Infof("DRY RUN: We normally would have updated %s (%s) to point to %#v", domain, zoneID, rrs)
 		return nil
 	}
-
-	_, err := r53Api.ChangeResourceRecordSets(&crrsInput)
+	_, err = r53Api.ChangeResourceRecordSets(&crrsInput)
 	if err != nil {
-		return fmt.Errorf("Failed to update record set: %v", err)
+		return fmt.Errorf("Failed to update record set: %v", err.Error())
 	}
 	return nil
 }
@@ -209,7 +219,6 @@ func removeDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 		glog.Infof("DRY RUN: We normally would have deleted %s (%s) pointing to %#v", domain, zoneID, rrs)
 		return nil
 	}
-
 	_, err := r53Api.ChangeResourceRecordSets(&crrsInput)
 	if err != nil {
 		return fmt.Errorf("Failed to delete record set: %v", err)

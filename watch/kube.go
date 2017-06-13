@@ -53,7 +53,7 @@ func Setup(kubeconfig *string, DryRun bool) {
 	if err != nil {
 		panic(err.Error())
 	}
-	dns_providers.Setup(true)
+	dns_providers.Setup(dryRun)
 	// setup AWS dns provider
 	serviceWatcherDone = false
 	nodeWatcherDone = false
@@ -61,7 +61,6 @@ func Setup(kubeconfig *string, DryRun bool) {
 
 func Start() {
 	// get watcher for services in kubernetes
-	//TODO: have diff structure to check changes
 	//TODO: update aws after ingress is added
 	id, subdomain := "ingress", "hello.waittimes.io"
 	dns_providers.AddRoute(&id, &subdomain, []string{"8.8.8.8"})
@@ -104,11 +103,17 @@ func updateRoutes(routeChanges view.RouteChanges) error {
 	id := ""
 	for _, route := range routeChanges.Deleted {
 		glog.Infof("Deleting route for %s", route.Subdomain)
-		dns_providers.RemoveRoute(&id, &route.Subdomain)
+		err := dns_providers.RemoveRoute(&id, &route.Subdomain)
+		if err != nil {
+			glog.Warningln(err)
+		}
 	}
 	for _, route := range routeChanges.Changed {
 		glog.Infof("Upserting route for %s with %v", route.Subdomain, route.Ips)
-		dns_providers.AddRoute(&id, &route.Subdomain, route.Ips)
+		err := dns_providers.AddRoute(&id, &route.Subdomain, route.Ips)
+		if err != nil {
+			glog.Warningln(err)
+		}
 	}
 	if len(routeChanges.Deleted) == 0 && len(routeChanges.Changed) == 0 {
 		glog.Infof("No changes to routes")
