@@ -77,18 +77,15 @@ func (c ClusterView) Dump() {
 }
 
 func (c ClusterView) UpdateIngress(ingress *v1beta1.Ingress, eventType watch.EventType) RouteChanges {
-	routeChanges := RouteChanges{
-		Deleted: make([]Route, 0, 1),
-		Changed: make([]Route, 0, 1),
-	}
+	var routeChanges RouteChanges
 	//TODO: if ingress is added then add/modified route is returned
 	switch eventType {
 	case watch.Added:
-		routeChanges.Changed = State.AddIngress(ingress)
+		routeChanges = State.AddIngress(ingress)
 	case watch.Modified:
-		routeChanges.Changed = State.ModIngress(ingress)
+		routeChanges = State.ModIngress(ingress)
 	case watch.Deleted:
-		routeChanges.Deleted = State.DeleteIngress(ingress)
+		routeChanges = State.DeleteIngress(ingress)
 	case watch.Error:
 		fmt.Println("error")
 	}
@@ -96,27 +93,20 @@ func (c ClusterView) UpdateIngress(ingress *v1beta1.Ingress, eventType watch.Eve
 }
 
 func (c ClusterView) UpdateNode(node *v1.Node, eventType watch.EventType) RouteChanges {
-	routeChanges := RouteChanges{
-		Deleted: make([]Route, 0, 1),
-		Changed: make([]Route, 0, 1),
-	}
+	var routeChanges RouteChanges
+
 	switch eventType {
 	case watch.Added:
-		routeChanges.Changed = State.AddNode(node)
+		routeChanges = State.AddNode(node)
 	case watch.Modified:
-		routeChanges.Changed = State.ModNode(node)
+		routeChanges = State.ModNode(node)
 	case watch.Deleted:
-		routes := State.DeleteNode(node)
-		if len(c.nodes) == 0 {
-			routeChanges.Deleted = routes
-		} else {
-			routeChanges.Changed = routes
-		}
+		routeChanges = State.DeleteNode(node)
 	}
 	return routeChanges
 }
 
-func (c ClusterView) AddIngress(i *v1beta1.Ingress) []Route {
+func (c ClusterView) AddIngress(i *v1beta1.Ingress) RouteChanges {
 	key := ingressKey(i)
 	_, ok := c.ingresses[key]
 	if ok {
@@ -124,11 +114,13 @@ func (c ClusterView) AddIngress(i *v1beta1.Ingress) []Route {
 	}
 	newIngress := createIngress(i)
 	c.ingresses[key] = newIngress
-	routes := c.createRoutes(newIngress.hostnames)
-	return routes
+	return RouteChanges{
+		Deleted: []Route{},
+		Changed: c.createRoutes(newIngress.hostnames),
+	}
 }
 
-func (c ClusterView) DeleteIngress(i *v1beta1.Ingress) []Route {
+func (c ClusterView) DeleteIngress(i *v1beta1.Ingress) RouteChanges {
 	key := ingressKey(i)
 	_, ok := c.ingresses[key]
 	if ok {
@@ -136,11 +128,17 @@ func (c ClusterView) DeleteIngress(i *v1beta1.Ingress) []Route {
 		fmt.Printf("Deleted Ingress with key = %v\n", key)
 	}
 	oldIngress := createIngress(i)
-	routes := c.createRoutes(oldIngress.hostnames)
-	return routes
+	changes := RouteChanges{
+		Deleted: []Route{},
+		Changed: []Route{},
+	}
+	if len(c.nodes) != 0 {
+		changes.Deleted = c.createRoutes(oldIngress.hostnames)
+	}
+	return changes
 }
 
-func (c ClusterView) ModIngress(i *v1beta1.Ingress) []Route {
+func (c ClusterView) ModIngress(i *v1beta1.Ingress) RouteChanges {
 	key := ingressKey(i)
 	ingress, ok := c.ingresses[key]
 	if !ok {
@@ -149,11 +147,16 @@ func (c ClusterView) ModIngress(i *v1beta1.Ingress) []Route {
 	newIngress := createIngress(i)
 	_, equal := messagediff.DeepDiff(ingress, newIngress)
 	if equal {
-		return make([]Route, 0)
+		return RouteChanges{
+			Deleted: []Route{},
+			Changed: []Route{},
+		}
 	}
 	c.ingresses[key] = newIngress
-	routes := c.createRoutes(newIngress.hostnames)
-	return routes
+	return RouteChanges{
+		Deleted: c.createRoutes(ingress.hostnames),
+		Changed: c.createRoutes(newIngress.hostnames),
+	}
 }
 
 func nodeKey(node *v1.Node) string {
@@ -173,20 +176,22 @@ func createNode(node *v1.Node) Node {
 	}
 }
 
-func (c ClusterView) AddNode(node *v1.Node) []Route {
+func (c ClusterView) AddNode(node *v1.Node) RouteChanges {
 	key := nodeKey(node)
 	_, ok := c.nodes[key]
 	if ok {
-		panic(fmt.Sprintf("Ingress already added - %#v\n", node))
+		panic(fmt.Sprintf("Node already added - %#v\n", node))
 	}
 	newNode := createNode(node)
 	c.nodes[key] = newNode
 	hostnames := c.getHostnames()
-	routes := c.createRoutes(hostnames)
-	return routes
+	return RouteChanges{
+		Deleted: []Route{},
+		Changed: c.createRoutes(hostnames),
+	}
 }
 
-func (c ClusterView) DeleteNode(node *v1.Node) []Route {
+func (c ClusterView) DeleteNode(node *v1.Node) RouteChanges {
 	key := nodeKey(node)
 	_, ok := c.nodes[key]
 	if ok {
@@ -194,11 +199,13 @@ func (c ClusterView) DeleteNode(node *v1.Node) []Route {
 		fmt.Printf("Deleted node with key = %v\n", key)
 	}
 	hostnames := c.getHostnames()
-	routes := c.createRoutes(hostnames)
-	return routes
+	return RouteChanges{
+		Deleted: []Route{},
+		Changed: c.createRoutes(hostnames),
+	}
 }
 
-func (c ClusterView) ModNode(node *v1.Node) []Route {
+func (c ClusterView) ModNode(node *v1.Node) RouteChanges {
 	key := nodeKey(node)
 	oldNode, ok := c.nodes[key]
 	if !ok {
@@ -207,12 +214,17 @@ func (c ClusterView) ModNode(node *v1.Node) []Route {
 	newNode := createNode(node)
 	_, equal := messagediff.DeepDiff(oldNode, newNode)
 	if equal {
-		return make([]Route, 0)
+		return RouteChanges{
+			Deleted: []Route{},
+			Changed: []Route{},
+		}
 	}
 	c.nodes[key] = newNode
 	hostnames := c.getHostnames()
-	routes := c.createRoutes(hostnames)
-	return routes
+	return RouteChanges{
+		Deleted: []Route{},
+		Changed: c.createRoutes(hostnames),
+	}
 }
 
 func (c ClusterView) getNodeIps() []string {

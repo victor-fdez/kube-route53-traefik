@@ -176,6 +176,7 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 func removeDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zoneID string) error {
 	var resourceRecords []*route53.ResourceRecord = make([]*route53.ResourceRecord, 0, 1)
 	var rrs route53.ResourceRecordSet
+	var TTL int64 = 300
 	// If we have an alias we use that
 	if alias != nil {
 		at := route53.AliasTarget{
@@ -190,16 +191,18 @@ func removeDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 		}
 	} else {
 		// for multiple ips we use those ips instead
-		for _, ip := range ips {
-			resourceRecords = append(resourceRecords, &route53.ResourceRecord{
-				Value: &ip,
-			})
+		for i, _ := range ips {
+			rr := route53.ResourceRecord{
+				Value: &ips[i],
+			}
+			resourceRecords = append(resourceRecords, &rr)
 		}
 		// A record for multiple IPs
 		rrs = route53.ResourceRecordSet{
 			ResourceRecords: resourceRecords,
 			Name:            &domain,
 			Type:            aws.String("A"),
+			TTL:             &TTL,
 		}
 	}
 	glog.Infof("Deleting A record for domain %s with %#v", domain, rrs)
