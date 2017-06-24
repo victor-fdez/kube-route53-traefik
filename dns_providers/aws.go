@@ -4,17 +4,19 @@ import (
 	"fmt"
 	"strings"
 
+	"go.uber.org/zap"
+
 	messagediff "gopkg.in/d4l3k/messagediff.v1"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/route53"
-	"github.com/golang/glog"
 )
 
 var route53Svc *route53.Route53
 var dryRun bool
 var routes AWSRoutes
+var sLog *zap.SugaredLogger
 
 type Route struct {
 	subdomain  string
@@ -24,15 +26,13 @@ type Route struct {
 }
 type AWSRoutes map[string]Route
 
-func init() {
+func Setup(DryRun bool, SLog *zap.SugaredLogger) {
 	routes = make(AWSRoutes)
-}
-
-func Setup(DryRun bool) {
 	session := session.Must(session.NewSession())
 	route53Svc = route53.New(session)
 	dryRun = DryRun
-	glog.Infof("Running in DRYRUN mode")
+	sLog = SLog
+	sLog.Infof("Running in DRYRUN mode")
 }
 
 func AddRoute(id, subdomain *string, ips []string) error {
@@ -52,16 +52,16 @@ func AddRoute(id, subdomain *string, ips []string) error {
 			hostedZone: route,
 			ips:        ips,
 		}
-		glog.Infof("adding subdomain (%s) to domain (%s)", subdomainRoute.subdomain, subdomainRoute.domain)
+		sLog.Infof("adding subdomain (%s) to domain (%s)", subdomainRoute.subdomain, subdomainRoute.domain)
 	} else {
-		glog.Infof("Found route in stored routes checking if something has changed (%s)", key)
+		sLog.Infof("Found route in stored routes checking if something has changed (%s)", key)
 		// check if something changed for structure
 		_, equal := messagediff.DeepDiff(subdomainRoute.ips, ips)
 		if equal {
 			// do nothing we already have routes setup
 			return nil
 		}
-		glog.Infof("Routes ips differed old %#v against new %#v", subdomainRoute.ips, ips)
+		sLog.Infof("Routes ips differed old %#v against new %#v", subdomainRoute.ips, ips)
 		// transplant previous information to new structure
 		subdomainRoute = Route{
 			subdomain:  subdomainRoute.subdomain,
@@ -82,7 +82,6 @@ func AddRoute(id, subdomain *string, ips []string) error {
 	} else {
 		routes[key] = subdomainRoute
 	}
-	glog.Flush()
 	return nil
 }
 
@@ -105,7 +104,6 @@ func RemoveRoute(id, subdomain *string) error {
 		// delete route from routes if successfully deleted from route53
 		delete(routes, key)
 	}
-	glog.Flush()
 	return nil
 }
 
@@ -113,7 +111,6 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 	var resourceRecords []*route53.ResourceRecord = make([]*route53.ResourceRecord, 0, 1)
 	var rrs route53.ResourceRecordSet
 	var cleanDomain = strings.Trim(domain, ".") + "."
-	var zID = strings.Split(zoneID, "/")[2]
 	var TTL int64 = 300
 	// If we have an alias we use that
 	if alias != nil {
@@ -127,6 +124,7 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 			Name:        &cleanDomain,
 			Type:        aws.String("A"),
 		}
+		sLog.Infof("UPSERT A Record in zone %s for domain %s with Alias [%s]", zoneID, domain, alias)
 	} else {
 		// for multiple ips we use those ips instead
 		for i, _ := range ips {
@@ -142,8 +140,8 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 			Type:            aws.String("A"),
 			TTL:             &TTL,
 		}
+		sLog.Infof("UPSERT A Record in zone %s for domain %s with IP addresses %v", zoneID, domain, ips)
 	}
-	glog.Infof("Upserting A record for domain %s with %#v", domain, rrs)
 	change := route53.Change{
 		Action:            aws.String("UPSERT"),
 		ResourceRecordSet: &rrs,
@@ -154,19 +152,13 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 	}
 	crrsInput := route53.ChangeResourceRecordSetsInput{
 		ChangeBatch:  &batch,
-		HostedZoneId: &zID,
-	}
-	err := crrsInput.Validate()
-	if err != nil {
-		return fmt.Errorf("%v", err.Error())
-	} else {
-		glog.Infof("A record has been validated on the client %v", crrsInput)
+		HostedZoneId: &zoneID,
 	}
 	if dryRun {
-		glog.Infof("DRY RUN: We normally would have updated %s (%s) to point to %#v", domain, zoneID, rrs)
+		sLog.Infof("DRY RUN: We normally would have updated %s (%s) to point to %#v", domain, zoneID, rrs)
 		return nil
 	}
-	_, err = r53Api.ChangeResourceRecordSets(&crrsInput)
+	_, err := r53Api.ChangeResourceRecordSets(&crrsInput)
 	if err != nil {
 		return fmt.Errorf("Failed to update record set: %v", err.Error())
 	}
@@ -189,6 +181,7 @@ func removeDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 			Name:        &domain,
 			Type:        aws.String("A"),
 		}
+		sLog.Infof("DELETE A Record in zone %s for domain %s with Alias [%s]", zoneID, domain, alias)
 	} else {
 		// for multiple ips we use those ips instead
 		for i, _ := range ips {
@@ -204,8 +197,8 @@ func removeDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 			Type:            aws.String("A"),
 			TTL:             &TTL,
 		}
+		sLog.Infof("DELETE A Record in zone %s for domain %s with IP addresses %v", zoneID, domain, ips)
 	}
-	glog.Infof("Deleting A record for domain %s with %#v", domain, rrs)
 	change := route53.Change{
 		Action:            aws.String("DELETE"),
 		ResourceRecordSet: &rrs,
@@ -219,7 +212,7 @@ func removeDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 		HostedZoneId: &zoneID,
 	}
 	if dryRun {
-		glog.Infof("DRY RUN: We normally would have deleted %s (%s) pointing to %#v", domain, zoneID, rrs)
+		sLog.Infof("DRY RUN: We normally would have deleted %s (%s) pointing to %#v", domain, zoneID, rrs)
 		return nil
 	}
 	_, err := r53Api.ChangeResourceRecordSets(&crrsInput)
@@ -270,7 +263,7 @@ func findMostSpecificZoneForDomain(domain string, zones []*route53.HostedZone) (
 		zone := zones[i]
 		zoneName := *zone.Name
 		if dryRun {
-			glog.Infof("domain: %v checking %v\n", domain, zoneName)
+			sLog.Infof("domain: %v checking %v\n", domain, zoneName)
 		}
 		if (domain == zoneName || strings.HasSuffix(domain, "."+zoneName)) && curLen < len(zoneName) {
 			curLen = len(zoneName)

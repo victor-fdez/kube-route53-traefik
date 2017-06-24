@@ -1,4 +1,4 @@
-package: .
+package: github.com/victor-fdez/kube-route53-traefik  
 import:
 - package: k8s.io/client-go
   version: v2.0.0
@@ -10,5 +10,5 @@ import:
   version: 0.2.2
 - package: github.com/go-ini/ini
   version: v1.28.0
-- package: github.com/golang/glog
-  version: 23def4e6c14b4da8ac2ed8007337bc5eb5007998
+- package: go.uber.org/zap
+  version: v1.4.1

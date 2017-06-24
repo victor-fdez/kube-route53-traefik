@@ -3,7 +3,8 @@ package view
 import (
 	"fmt"
 
-	"github.com/davecgh/go-spew/spew"
+	"go.uber.org/zap"
+
 	messagediff "gopkg.in/d4l3k/messagediff.v1"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
@@ -42,12 +43,14 @@ type Route struct {
 }
 
 var State ClusterView
+var sLog *zap.SugaredLogger
 
-func init() {
+func Setup(SLog *zap.SugaredLogger) {
 	State = ClusterView{
 		ingresses: make(map[string]Ingress),
 		nodes:     make(map[string]Node),
 	}
+	sLog = SLog
 }
 
 func ingressKey(i *v1beta1.Ingress) string {
@@ -72,13 +75,11 @@ func createIngress(i *v1beta1.Ingress) Ingress {
 }
 
 func (c ClusterView) Dump() {
-	spew.Config.Indent = "\t"
-	spew.Dump(c)
+	//sLog.Debug(spew.Sdump(c))
 }
 
 func (c ClusterView) UpdateIngress(ingress *v1beta1.Ingress, eventType watch.EventType) RouteChanges {
 	var routeChanges RouteChanges
-	//TODO: if ingress is added then add/modified route is returned
 	switch eventType {
 	case watch.Added:
 		routeChanges = State.AddIngress(ingress)
@@ -110,7 +111,7 @@ func (c ClusterView) AddIngress(i *v1beta1.Ingress) RouteChanges {
 	key := ingressKey(i)
 	_, ok := c.ingresses[key]
 	if ok {
-		panic(fmt.Sprintf("Ingress already added - %#v\n", i))
+		sLog.Panic(fmt.Sprintf("Ingress already added - %#v\n", i))
 	}
 	newIngress := createIngress(i)
 	c.ingresses[key] = newIngress
@@ -125,7 +126,7 @@ func (c ClusterView) DeleteIngress(i *v1beta1.Ingress) RouteChanges {
 	_, ok := c.ingresses[key]
 	if ok {
 		delete(c.ingresses, key)
-		fmt.Printf("Deleted Ingress with key = %v\n", key)
+		sLog.Infof("Deleted Ingress with key = %v\n", key)
 	}
 	oldIngress := createIngress(i)
 	changes := RouteChanges{
@@ -142,7 +143,7 @@ func (c ClusterView) ModIngress(i *v1beta1.Ingress) RouteChanges {
 	key := ingressKey(i)
 	ingress, ok := c.ingresses[key]
 	if !ok {
-		panic(fmt.Sprintf("Ingress does not exists but was modifed %#v", i))
+		sLog.Panic(fmt.Sprintf("Ingress does not exists but was modifed %#v", i))
 	}
 	newIngress := createIngress(i)
 	_, equal := messagediff.DeepDiff(ingress, newIngress)
@@ -180,7 +181,7 @@ func (c ClusterView) AddNode(node *v1.Node) RouteChanges {
 	key := nodeKey(node)
 	_, ok := c.nodes[key]
 	if ok {
-		panic(fmt.Sprintf("Node already added - %#v\n", node))
+		sLog.Panic(fmt.Sprintf("Node already added - %#v\n", node))
 	}
 	newNode := createNode(node)
 	c.nodes[key] = newNode
@@ -196,7 +197,7 @@ func (c ClusterView) DeleteNode(node *v1.Node) RouteChanges {
 	_, ok := c.nodes[key]
 	if ok {
 		delete(c.nodes, key)
-		fmt.Printf("Deleted node with key = %v\n", key)
+		sLog.Infof("Deleted node with key = %v\n", key)
 	}
 	hostnames := c.getHostnames()
 	return RouteChanges{
@@ -209,7 +210,7 @@ func (c ClusterView) ModNode(node *v1.Node) RouteChanges {
 	key := nodeKey(node)
 	oldNode, ok := c.nodes[key]
 	if !ok {
-		panic(fmt.Sprintf("Node does not exists but was modifed %#v", node))
+		sLog.Panic(fmt.Sprintf("Node does not exists but was modifed %#v", node))
 	}
 	newNode := createNode(node)
 	_, equal := messagediff.DeepDiff(oldNode, newNode)

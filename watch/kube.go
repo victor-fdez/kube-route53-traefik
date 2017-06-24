@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/golang/glog"
+	"go.uber.org/zap"
+
 	"github.com/victor-fdez/kube-route53-traefik/dns_providers"
 	"github.com/victor-fdez/kube-route53-traefik/view"
 
@@ -20,40 +21,44 @@ var client *kubernetes.Clientset
 var ingressWatcher, nodeWatcher watch.Interface
 var serviceWatcherDone, nodeWatcherDone bool
 var dryRun bool
+var sLog *zap.SugaredLogger
 
-func Setup(kubeconfig *string, DryRun bool) {
+func Setup(kubeconfig *string, DryRun bool, SLog *zap.SugaredLogger) {
+	var err error
 	var config *rest.Config
 	dryRun = DryRun
-	var err error
+	sLog = SLog
 	//var serviceWatcherDone, nodeWatcherDone bool
 	if *kubeconfig != "" {
 		// uses the current context in kubeconfig
 		config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
 		if err != nil {
-			panic(err.Error())
+			sLog.Panic(err)
 		}
 	} else {
 		// creates the in-cluster config
 		config, err = rest.InClusterConfig()
 		if err != nil {
-			panic(err.Error())
+			sLog.Panic(err)
 		}
 	}
 	// creates the clientset
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		sLog.Panic(err)
 	}
 	// setup watchers
 	ingressWatcher, err = client.Ingresses("").Watch(v1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		sLog.Panic(err)
 	}
 	nodeWatcher, err = client.Nodes().Watch(v1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		sLog.Panic(err)
 	}
-	dns_providers.Setup(dryRun)
+	// setup the DNS provider, and cluster view
+	dns_providers.Setup(dryRun, sLog)
+	view.Setup(sLog)
 	// setup AWS dns provider
 	serviceWatcherDone = false
 	nodeWatcherDone = false
@@ -61,9 +66,6 @@ func Setup(kubeconfig *string, DryRun bool) {
 
 func Start() {
 	// get watcher for services in kubernetes
-	//TODO: update aws after ingress is added
-	id, subdomain := "ingress", "hello.waittimes.io"
-	dns_providers.AddRoute(&id, &subdomain, []string{"8.8.8.8"})
 	ingressEventChan := ingressWatcher.ResultChan()
 	nodeEventChan := nodeWatcher.ResultChan()
 	for {
@@ -102,21 +104,19 @@ func Start() {
 func updateRoutes(routeChanges view.RouteChanges) error {
 	id := ""
 	for _, route := range routeChanges.Deleted {
-		glog.Infof("Deleting route for %s", route.Subdomain)
 		err := dns_providers.RemoveRoute(&id, &route.Subdomain)
 		if err != nil {
-			glog.Warningln(err)
+			sLog.Warn(err)
 		}
 	}
 	for _, route := range routeChanges.Changed {
-		glog.Infof("Upserting route for %s with %v", route.Subdomain, route.Ips)
 		err := dns_providers.AddRoute(&id, &route.Subdomain, route.Ips)
 		if err != nil {
-			glog.Warningln(err)
+			sLog.Warn(err)
 		}
 	}
 	if len(routeChanges.Deleted) == 0 && len(routeChanges.Changed) == 0 {
-		glog.Infof("No changes to routes")
+		sLog.Infof("No changes to routes")
 	}
 	return nil
 }

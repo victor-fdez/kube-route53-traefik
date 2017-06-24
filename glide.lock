@@ -1,5 +1,5 @@
-hash: 9ef240e21a36bc50e70839f4462726adddb4e64757cabed0010d9ddc1554aa2a
-updated: 2017-06-09T19:37:51.846528048-06:00
+hash: a8ac65cfad59bc31bd3ef3021241357ef8a5e55a39e16cff1a9b3f822ba1307a
+updated: 2017-06-24T11:11:27.058685304-06:00
 imports:
 - name: cloud.google.com/go
   version: 3b1ae45394a234c385be014e9a488f2bb6eef821
@@ -117,6 +117,17 @@ imports:
   version: f1f1a805ed361a0e078bb537e4ea78cd37dcf065
   subpackages:
   - codec
+- name: go.uber.org/atomic
+  version: 4e336646b2ef9fc6e47be8e21594178f98e5ebcf
+- name: go.uber.org/zap
+  version: 9cabc84638b70e564c3dab2766efcb1ded2aac9f
+  subpackages:
+  - buffer
+  - internal/bufferpool
+  - internal/color
+  - internal/exit
+  - internal/multierror
+  - zapcore
 - name: golang.org/x/crypto
   version: 1f22c0103821b9390939b6776727195525381532
   subpackages:
