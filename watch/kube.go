@@ -18,8 +18,8 @@ import (
 )
 
 var client *kubernetes.Clientset
-var ingressWatcher, nodeWatcher watch.Interface
-var serviceWatcherDone, nodeWatcherDone bool
+var ingressWatcher, serviceWatcher, nodeWatcher watch.Interface
+var ingressWatcherDone, serviceWatcherDone, nodeWatcherDone bool
 var dryRun bool
 var sLog *zap.SugaredLogger
 
@@ -52,6 +52,13 @@ func Setup(kubeconfig *string, DryRun bool, SLog *zap.SugaredLogger) {
 	if err != nil {
 		sLog.Panic(err)
 	}
+	// this service must be located in kube-system as the traefik ha proxy
+	// will work as an ingress controller and it needs to be in this privileged
+	// namespace
+	serviceWatcher, err = client.Services("kube-system").Watch(v1.ListOptions{})
+	if err != nil {
+		sLog.Panic(err)
+	}
 	nodeWatcher, err = client.Nodes().Watch(v1.ListOptions{})
 	if err != nil {
 		sLog.Panic(err)
@@ -60,13 +67,19 @@ func Setup(kubeconfig *string, DryRun bool, SLog *zap.SugaredLogger) {
 	dns_providers.Setup(dryRun, sLog)
 	view.Setup(sLog)
 	// setup AWS dns provider
+	ingressWatcherDone = false
 	serviceWatcherDone = false
 	nodeWatcherDone = false
 }
 
+//TODO: find the ELB route from service load balancer specified, add an anotation to service
+//TODO: specify either nodeport or service name to use
+//TODO: add service watcher also for this kind of event
+
 func Start() {
 	// get watcher for services in kubernetes
 	ingressEventChan := ingressWatcher.ResultChan()
+	serviceEventChan := serviceWatcher.ResultChan()
 	nodeEventChan := nodeWatcher.ResultChan()
 	for {
 		select {
@@ -74,7 +87,25 @@ func Start() {
 			if ok {
 				// process each event received
 				ingress := event.Object.(*v1beta1.Ingress)
+				sLog.Infof("%s ingress %s/%s with ingress controller [%v]",
+					event.Type,
+					ingress.Namespace,
+					ingress.Name,
+					ingress.Annotations["kubernetes.io/ingress.class"])
 				routeChanges := view.State.UpdateIngress(ingress, event.Type)
+				updateRoutes(routeChanges)
+				view.State.Dump()
+			} else {
+				// error with channel/or no more events
+				fmt.Printf("Error: no more service events")
+				ingressWatcherDone = true
+			}
+		case event, ok := <-serviceEventChan:
+			if ok {
+				// process each event received
+				service := event.Object.(*v1.Service)
+				sLog.Infof("%s service %s with ingresses %v", event.Type, service.Name, service.Status.LoadBalancer.Ingress)
+				routeChanges := view.State.UpdateIngCtrlSvc(service, event.Type)
 				updateRoutes(routeChanges)
 				view.State.Dump()
 			} else {
@@ -85,6 +116,7 @@ func Start() {
 		case event, ok := <-nodeEventChan:
 			if ok {
 				node := event.Object.(*v1.Node)
+				sLog.Infof("%s node %s with IP [%v]", event.Type, node.Name, node.Status.Addresses)
 				routeChanges := view.State.UpdateNode(node, event.Type)
 				updateRoutes(routeChanges)
 				view.State.Dump()
@@ -95,7 +127,9 @@ func Start() {
 		}
 		// if any or all of the channels are finished then
 		// exit process
-		if nodeWatcherDone || serviceWatcherDone {
+		if nodeWatcherDone ||
+			serviceWatcherDone ||
+			ingressWatcherDone {
 			os.Exit(0)
 		}
 	}
@@ -104,13 +138,13 @@ func Start() {
 func updateRoutes(routeChanges view.RouteChanges) error {
 	id := ""
 	for _, route := range routeChanges.Deleted {
-		err := dns_providers.RemoveRoute(&id, &route.Subdomain)
+		err := dns_providers.RemoveRoute(&id, &route.Subdomain, route.Alias)
 		if err != nil {
 			sLog.Warn(err)
 		}
 	}
 	for _, route := range routeChanges.Changed {
-		err := dns_providers.AddRoute(&id, &route.Subdomain, route.Ips)
+		err := dns_providers.AddRoute(&id, &route.Subdomain, route.Ips, route.Alias)
 		if err != nil {
 			sLog.Warn(err)
 		}

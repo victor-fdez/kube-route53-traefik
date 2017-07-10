@@ -22,10 +22,12 @@ type Route struct {
 	subdomain  string
 	domain     string
 	ips        []string
+	alias      string
 	hostedZone *route53.HostedZone
 }
 type AWSRoutes map[string]Route
 
+//TODO: add support for alias routes
 func Setup(DryRun bool, SLog *zap.SugaredLogger) {
 	routes = make(AWSRoutes)
 	session := session.Must(session.NewSession())
@@ -35,7 +37,7 @@ func Setup(DryRun bool, SLog *zap.SugaredLogger) {
 	sLog.Infof("Running in DRYRUN mode")
 }
 
-func AddRoute(id, subdomain *string, ips []string) error {
+func AddRoute(id, subdomain *string, ips []string, alias string) error {
 	var subdomainRoute Route
 	var ok bool = false
 	key := *id + "/" + *subdomain
@@ -50,31 +52,38 @@ func AddRoute(id, subdomain *string, ips []string) error {
 			subdomain:  *subdomain,
 			domain:     *tld,
 			hostedZone: route,
+			alias:      alias,
 			ips:        ips,
 		}
 		sLog.Infof("adding subdomain (%s) to domain (%s)", subdomainRoute.subdomain, subdomainRoute.domain)
 	} else {
+		tld, route, err := getDestinationZone(*subdomain, route53Svc)
+		if err != nil {
+			return err
+		}
+		subdomainRouteNew := Route{
+			subdomain:  *subdomain,
+			domain:     *tld,
+			hostedZone: route,
+			alias:      alias,
+			ips:        ips,
+		}
 		sLog.Infof("Found route in stored routes checking if something has changed (%s)", key)
 		// check if something changed for structure
-		_, equal := messagediff.DeepDiff(subdomainRoute.ips, ips)
+		diff, equal := messagediff.DeepDiff(subdomainRouteNew, subdomainRoute)
 		if equal {
 			// do nothing we already have routes setup
 			return nil
 		}
-		sLog.Infof("Routes ips differed old %#v against new %#v", subdomainRoute.ips, ips)
+		sLog.Infof("Routes differed %v", diff)
 		// transplant previous information to new structure
-		subdomainRoute = Route{
-			subdomain:  subdomainRoute.subdomain,
-			domain:     subdomainRoute.domain,
-			hostedZone: subdomainRoute.hostedZone,
-			ips:        ips,
-		}
+		subdomainRoute = subdomainRouteNew
 	}
 
 	//TODO: for now just with multiple IPs in the future may use alias
 	err := updateDNS(route53Svc,
 		subdomainRoute.ips,
-		nil,
+		subdomainRoute.alias,
 		subdomainRoute.subdomain,
 		*subdomainRoute.hostedZone.Id)
 	if err != nil {
@@ -85,7 +94,7 @@ func AddRoute(id, subdomain *string, ips []string) error {
 	return nil
 }
 
-func RemoveRoute(id, subdomain *string) error {
+func RemoveRoute(id, subdomain *string, alias string) error {
 	key := *id + "/" + *subdomain
 
 	subdomainRoute, ok := routes[key]
@@ -95,7 +104,7 @@ func RemoveRoute(id, subdomain *string) error {
 	}
 	err := removeDNS(route53Svc,
 		subdomainRoute.ips,
-		nil,
+		alias,
 		subdomainRoute.subdomain,
 		*subdomainRoute.hostedZone.Id)
 	if err != nil {
@@ -107,17 +116,19 @@ func RemoveRoute(id, subdomain *string) error {
 	return nil
 }
 
-func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zoneID string) error {
+func updateDNS(r53Api *route53.Route53, ips []string, alias string, domain, zoneID string) error {
 	var resourceRecords []*route53.ResourceRecord = make([]*route53.ResourceRecord, 0, 1)
 	var rrs route53.ResourceRecordSet
 	var cleanDomain = strings.Trim(domain, ".") + "."
 	var TTL int64 = 300
+	var EzoneID = "Z35SXDOTRQ7X7K"
+	zoneID = strings.Split(zoneID, "/")[2]
 	// If we have an alias we use that
-	if alias != nil {
+	if alias != "" {
 		at := route53.AliasTarget{
-			DNSName:              alias,
+			DNSName:              &alias,
 			EvaluateTargetHealth: aws.Bool(false),
-			HostedZoneId:         &zoneID,
+			HostedZoneId:         &EzoneID,
 		}
 		rrs = route53.ResourceRecordSet{
 			AliasTarget: &at,
@@ -165,16 +176,18 @@ func updateDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zon
 	return nil
 }
 
-func removeDNS(r53Api *route53.Route53, ips []string, alias *string, domain, zoneID string) error {
+func removeDNS(r53Api *route53.Route53, ips []string, alias string, domain, zoneID string) error {
 	var resourceRecords []*route53.ResourceRecord = make([]*route53.ResourceRecord, 0, 1)
 	var rrs route53.ResourceRecordSet
 	var TTL int64 = 300
+	var EzoneID = "Z35SXDOTRQ7X7K"
+	zoneID = strings.Split(zoneID, "/")[2]
 	// If we have an alias we use that
-	if alias != nil {
+	if alias != "" {
 		at := route53.AliasTarget{
-			DNSName:              alias,
+			DNSName:              &alias,
 			EvaluateTargetHealth: aws.Bool(false),
-			HostedZoneId:         &zoneID,
+			HostedZoneId:         &EzoneID,
 		}
 		rrs = route53.ResourceRecordSet{
 			AliasTarget: &at,
@@ -235,7 +248,6 @@ func getDestinationZone(domain string, r53Api *route53.Route53) (*string, *route
 	if err != nil {
 		return nil, nil, fmt.Errorf("No zone found for %s: %v", tld, err)
 	}
-	// TODO: The AWS API may return multiple pages, we should parse them all
 	hz, err := findMostSpecificZoneForDomain(domain, hzOut.HostedZones)
 	return &tld, hz, err
 }
@@ -263,7 +275,7 @@ func findMostSpecificZoneForDomain(domain string, zones []*route53.HostedZone) (
 		zone := zones[i]
 		zoneName := *zone.Name
 		if dryRun {
-			sLog.Infof("domain: %v checking %v\n", domain, zoneName)
+			sLog.Infof("domain: %v checking %v", domain, zoneName)
 		}
 		if (domain == zoneName || strings.HasSuffix(domain, "."+zoneName)) && curLen < len(zoneName) {
 			curLen = len(zoneName)
